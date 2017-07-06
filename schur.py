@@ -1,14 +1,16 @@
 import numpy as np
-from algebra import *
+from algebra import dots
+
 
 def get_schur_complement(A, b, n):
     A = np.asarray(A)
     m = A.shape[0] - n
 
-    V = dots(A[:n, -m:], np.linalg.inv(A[-m:,-m:]))
+    V = dots(A[:n, -m:], np.linalg.inv(A[-m:, -m:]))
     Acomp = A[:n, :n] - dots(V, A[-m:, :n])
-    bcomp = b[:n]     - dots(V, b[-m:])
-    return Acomp,bcomp
+    bcomp = b[:n] - dots(V, b[-m:])
+    return Acomp, bcomp
+
 
 def solve_by_schur(A, b, n, mask=None):
     A = np.asarray(A)
@@ -43,13 +45,14 @@ def solve_by_schur(A, b, n, mask=None):
 
     return np.concatenate((x1, x2))
 
+
 if __name__ == '__main__':
-    A = np.array([[1,2,3,4],
-                  [5,4,3,2],
-                  [8,7,2,2],
-                  [9,9,9,10]], float)
+    A = np.array([[1, 2, 3, 4],
+                  [5, 4, 3, 2],
+                  [8, 7, 2, 2],
+                  [9, 9, 9, 10]], float)
     print np.linalg.det(A)
-    
+
     b = np.arange(4)
     print np.linalg.solve(A, b)
 

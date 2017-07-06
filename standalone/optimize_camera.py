@@ -1,7 +1,4 @@
-# Import python's numerics library
-from numpy import *
-from numpy.linalg import *
-from numpy.random import *
+# import numpy as np
 
 from helpers import *
 
@@ -13,13 +10,14 @@ from helpers import *
 
 # Optimization parameters
 MAX_STEPS = 100
-CONVERGENCE_THRESH = 1e-5   # convergence detected when improvement less than this
+CONVERGENCE_THRESH = 1e-5  # convergence detected when improvement less than this
 INIT_DAMPING = 10.
-         
+
 # Camera calibration
-K = array([[ 1.,   0.,   0. ],
-           [ 0.,   1.,   0. ],
-           [ 0.,   0.,   1. ]])
+K = np.array([[1., 0., 0.],
+              [0., 1., 0.],
+              [0., 0., 1.]])
+
 
 # Compute the reprojection error of x given a camera (R,t) with
 # intrinsics K. Also compute the Jacobian with respect to R and t.
@@ -37,38 +35,39 @@ K = array([[ 1.,   0.,   0. ],
 #   Jf_R = Jpr(K * (R * x + t)) * K
 # where Jpr is the Jacobian of (x,y,z) -> (x/z, y/z)
 def compute_camera_jacobian_robust(R, t, x, measurement):
-    R = asarray(R)
-    t = asarray(t)
-    x = asarray(x)
-    measurement = asarray(measurement)
+    R = np.asarray(R)
+    t = np.asarray(t)
+    x = np.asarray(x)
+    measurement = np.asarray(measurement)
 
     # projection: p = K * (R*x + t)
-    p = dot(K, dot(R, x) + t)
+    p = np.dot(K, np.dot(R, x) + t)
     # jacobian of projection with respect to p
-    Jpr = array([[ 1./p[2],  0.,       -p[0] / (p[2]*p[2]) ],
-                 [ 0.,       1./p[2],  -p[1] / (p[2]*p[2]) ]])
+    Jpr = np.array([[1. / p[2], 0., -p[0] / (p[2] * p[2])],
+                    [0., 1. / p[2], -p[1] / (p[2] * p[2])]])
 
     # Divide by z
     prediction = p[:2] / p[2]
     reproj_error = prediction - measurement
     # Robustify
     residual, Jresidual = cauchy_residual_from_reprojection_error(reproj_error)
-    Jpr = dots3(Jresidual, Jpr, K)
+    Jpr = dots(Jresidual, Jpr, K)
 
     # Jacobian of the projection with respect to rotation
-    JR = dots3(Jpr, R, skew(-x))
+    JR = dots(Jpr, R, skew(-x))
     # Jacobian of the projection with respect to transation
     Jt = Jpr
     # Concatenate
-    J = hstack((JR, Jt))
+    J = np.hstack((JR, Jt))
 
     return J, residual
+
 
 # Compute the sum of Cauchy-robustified reprojection errors
 def cost_robust(points, measurements, R, t):
     error = 0.
     for i in range(len(points)):
-        projection = dot(K, dot(R, points[i]) + t)
+        projection = np.dot(K, np.dot(R, points[i]) + t)
         projection = projection[:2] / projection[2]
         reproj_error = projection - measurements[i]
         error += cauchy_cost_from_reprojection_error(reproj_error)  # sum of squared differences
@@ -98,14 +97,14 @@ def optimize_pose(points, measurements, R_init, t_init):
         print 'Step %d: cost=%f' % (num_steps, cost_cur)
 
         # Compute J^T * J and J^T * r
-        JTJ = zeros((6,6))
-        JTr = zeros(6)
+        JTJ = np.zeros((6, 6))
+        JTr = np.zeros(6)
         for i in range(len(points)):
             # Jacobian for the i-th point:
             Ji, ri = compute_camera_jacobian_robust(R_cur, t_cur, points[i], measurements[i])
             # Add to full jacobian
-            JTJ += dot(Ji.T, Ji)    # 6x2 * 2x6
-            JTr += dot(Ji.T, ri)    # 6x2 * 2x1
+            JTJ += np.dot(Ji.T, Ji)  # 6x2 * 2x6
+            JTr += np.dot(Ji.T, ri)  # 6x2 * 2x1
 
         # Pick a step length
         while damping < 1e+8 and not converged:
@@ -113,12 +112,12 @@ def optimize_pose(points, measurements, R_init, t_init):
             A = JTJ.copy()
             for i in range(6):
                 A[i] *= (1. + damping)
-    
+
             # Solve normal equations
-            update = -solve(A, JTr)
+            update = -np.linalg.solve(A, JTr)
 
             # Take gradient step
-            R_next = dot(R_cur, SO3_exp(update[:3]))
+            R_next = np.dot(R_cur, SO3_exp(update[:3]))
             t_next = t_cur + update[3:]
 
             # Compute new cost
@@ -143,6 +142,7 @@ def optimize_pose(points, measurements, R_init, t_init):
 
     return R_cur, t_cur
 
+
 ####################################################################################
 # End of main optimization stuff
 ####################################################################################
@@ -163,45 +163,45 @@ def run_with_synthetic_data():
     MEASUREMENT_NOISE = .1
     NUM_OUTLIERS = 10
 
-    seed(1211)  # repeatability
+    np.random.seed(1211)  # repeatability
 
-    R = eye(3)
-    t = array([5., 1.,  5.])
+    R = np.eye(3)
+    t = np.array([5., 1., 5.])
 
     # Generate some points
-    xs = randn(NUM_POINTS, 3)
-    
+    xs = np.random.randn(NUM_POINTS, 3)
+
     # Generate some measurements
-    measurements = array([ dot(K, dot(R,x)+t) for x in xs ])
-    measurements = measurements[:,:2] / measurements[:,2:]   # pinhole projection
+    measurements = np.array([np.dot(K, np.dot(R, x) + t) for x in xs])
+    measurements = measurements[:, :2] / measurements[:, 2:]  # pinhole projection
 
     # Add some measurement noise
-    measurements += randn(*measurements.shape) * MEASUREMENT_NOISE
+    measurements += np.random.randn(*measurements.shape) * MEASUREMENT_NOISE
 
     # Add some outliers
-    outliers = permutation(len(measurements))[:NUM_OUTLIERS]
-    measurements[outliers] = randn(len(outliers), 2) * 3.
+    outliers = np.random.permutation(len(measurements))[:NUM_OUTLIERS]
+    measurements[outliers] = np.random.randn(len(outliers), 2) * 3.
 
     # Pick a starting point for optimization
     th = .3
-    R_init = array([[ cos(th), -sin(th),  0. ],
-                    [ sin(th),  cos(th),  0. ],
-                    [ 0      ,  0.      , 1. ]])
-    t_init = array([ 5.1, .7, 4. ])
+    R_init = np.array([[np.cos(th), -np.sin(th), 0.],
+                       [np.sin(th), np.cos(th), 0.],
+                       [0, 0., 1.]])
+    t_init = np.array([5.1, .7, 4.])
 
     # Save to file
-    pt_data = hstack((xs,measurements))
-    savetxt(open('pose_estimation_data/100measurements_with_outliers.txt', 'w'), pt_data, fmt='%10f')
-    
-    P = hstack((R_init, t_init[:,newaxis]))
-    savetxt(open('pose_estimation_data/init_pose.txt', 'w'), P, fmt='%10f')
+    pt_data = np.hstack((xs, measurements))
+    np.savetxt(open('pose_estimation_data/100measurements_with_outliers.txt', 'w'), pt_data, fmt='%10f')
+
+    P = np.hstack((R_init, t_init[:, np.newaxis]))
+    np.savetxt(open('pose_estimation_data/init_pose.txt', 'w'), P, fmt='%10f')
 
     # Optimize
     R_opt, t_opt = optimize_pose(xs, measurements, R_init, t_init)
-    
+
     # Report
-    P_opt = hstack((R_opt, t_opt[:, newaxis]))
-    P_init = hstack((R_init, t_init[:, newaxis]))
+    P_opt = np.hstack((R_opt, t_opt[:, np.newaxis]))
+    P_init = np.hstack((R_init, t_init[:, np.newaxis]))
     print '\nInitial pose:'
     print P_init
     print '\nFinal polished pose:'
@@ -215,18 +215,18 @@ def run_with_data_from_file():
         sys.exit(-1)
 
     try:
-        data1 = loadtxt(open(sys.argv[1]))
-        xs = data1[:,:3]
-        measurements = data1[:,3:]
+        data1 = np.loadtxt(open(sys.argv[1]))
+        xs = data1[:, :3]
+        measurements = data1[:, 3:]
     except:
         print 'Failed to load measurements from %s\nFormat is "x y z image_x image_y" for each row' % sys.argv[1]
         sys.exit(-1)
 
     try:
-        data2 = loadtxt(open(sys.argv[2]))
-        assert data2.shape == (3,4), 'Data in %s should be a 3x4 matrix' % sys.argv[2]
-        R_init = data2[:,:3]
-        t_init = data2[:,3]
+        data2 = np.loadtxt(open(sys.argv[2]))
+        assert data2.shape == (3, 4), 'Data in %s should be a 3x4 matrix' % sys.argv[2]
+        R_init = data2[:, :3]
+        t_init = data2[:, 3]
     except:
         print 'Failed to load initial pose from %s\nFormat is a single 3x4 projection matrix' % sys.argv[2]
         sys.exit(-1)
@@ -234,15 +234,14 @@ def run_with_data_from_file():
     R_opt, t_opt = optimize_pose(xs, measurements, R_init, t_init)
 
     # Report
-    P_opt = hstack((R_opt, t_opt[:, newaxis]))
-    P_init = hstack((R_init, t_init[:, newaxis]))
+    P_opt = np.hstack((R_opt, t_opt[:, np.newaxis]))
+    P_init = np.hstack((R_init, t_init[:, np.newaxis]))
     print '\nInitial pose:'
     print P_init
     print '\nFinal polished pose:'
     print P_opt
 
 
-
 if __name__ == '__main__':
-    #run_with_synthetic_data()
+    # run_with_synthetic_data()
     run_with_data_from_file()

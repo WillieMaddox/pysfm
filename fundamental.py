@@ -1,11 +1,9 @@
 import sys
-from numpy import *
-from numpy.linalg import *
 import numpy as np
 
 from lie import SO3
-from geometry import *
-from algebra import *
+from geometry import rotation_xy, rotation_xz, rotation_yz, relative_pose
+from algebra import dots, skew, pr, unpr
 
 # Debug only:
 import finite_differences
@@ -22,220 +20,243 @@ import finite_differences
 
 ################################################################################
 NUM_CORRESPONDENCES = 500
-SENSOR_NOISE        = 0.01
+SENSOR_NOISE = 0.01
 
-MAX_STEPS           = 15
-CONVERGENCE_THRESH  = 1e-5   # convergence detected when improvement less than this
-INIT_DAMPING        = .1
+MAX_STEPS = 15
+CONVERGENCE_THRESH = 1e-5  # convergence detected when improvement less than this
+INIT_DAMPING = .1
 
-K                   = eye(3)
-#K                   = array([[  1.5 ,  0., -.4 ],
+K = np.eye(3)
+# K                   = array([[  1.5 ,  0., -.4 ],
 #                             [   0.,  .9,  .18 ],
 #                             [   0. ,  0.,   1. ]])
 
-CAUCHY_SIGMA        = .1
-CAUCHY_SIGMA_SQR    = CAUCHY_SIGMA * CAUCHY_SIGMA
+CAUCHY_SIGMA = .1
+CAUCHY_SIGMA_SQR = CAUCHY_SIGMA * CAUCHY_SIGMA
 
-FREEZE_LARGEST      = True
+FREEZE_LARGEST = True
 
-DEBUG               = False
+DEBUG = False
+
 
 ################################################################################
 # Performs an "inverse" masking operation on a vector
 def unmask(v, mask, fill=0.):
     assert mask.dtype.kind == 'b'
     assert np.sum(mask) == len(v)
-    u = zeros(len(mask))
+    u = np.zeros(len(mask))
     u[mask] = v
     return u
+
 
 ################################################################################
 # Compute the Fundamental matrix K^-T * skew(t) * R * K^-1
 def make_fundamental(K, R, t):
-    Kinv = inv(K)
+    Kinv = np.linalg.inv(K)
     return dots(Kinv.T, skew(t), R, Kinv)
+
 
 ################################################################################
 def point_line_distance(p, l):
-    assert shape(p) == (3,)
-    assert shape(l) == (3,)
-    return abs(dot(p,l) / (p[2] * norm(l[:2])))
+    assert np.shape(p) == (3,)
+    assert np.shape(l) == (3,)
+    return np.abs(np.dot(p, l) / (p[2] * np.linalg.norm(l[:2])))
+
 
 ################################################################################
 # Compute the algebraic error. Used only for sanity checking during debugging
 def algebraic_error_forwards(K, R, t, xs0, xs1):
     F = make_fundamental(K, R, t)
     c = 0.
-    for x0,x1 in zip(xs0,xs1):
-        c += point_line_distance(dot(F, unpr(x0)), unpr(x1))
+    for x0, x1 in zip(xs0, xs1):
+        c += point_line_distance(np.dot(F, unpr(x0)), unpr(x1))
     return c
+
 
 ################################################################################
 def cauchy_cost(r):
-    return log( 1. + dot(r,r) / CAUCHY_SIGMA_SQR )
+    return np.log(1. + np.dot(r, r) / CAUCHY_SIGMA_SQR)
+
 
 ################################################################################
-def cauchy_jacobian(r):
-    C   = cauchy_cost(r)
-    JTJ = dot(J.T, J)
-    g   = dot(J.T, r)
-    d   = CAUCHY_SIGMA_SQR + dot(r,r)
-    return 2*JTJ/d - 4*outer(g,g)/(d*d)
+def cauchy_jacobian(r, J):
+    C = cauchy_cost(r)
+    JTJ = np.dot(J.T, J)
+    g = np.dot(J.T, r)
+    d = CAUCHY_SIGMA_SQR + np.dot(r, r)
+    return 2 * JTJ / d - 4 * np.outer(g, g) / (d * d)
+
 
 ################################################################################
 def cauchy_hessian_firstorder(r, J):
-    JTJ = dot(J.T, J)
-    g   = dot(J.T, r)
-    d   = CAUCHY_SIGMA_SQR + dot(r,r)
-    return 2.*JTJ/d - 4.*outer(g,g)/(d*d)
+    JTJ = np.dot(J.T, J)
+    g = np.dot(J.T, r)
+    d = CAUCHY_SIGMA_SQR + np.dot(r, r)
+    return 2. * JTJ / d - 4. * np.outer(g, g) / (d * d)
+
 
 ################################################################################
 # Given a residual vector, compute the square root of the
 # Cauchy-robustified error response.
 def cauchy_sqrtcost_from_residual(r):
-    return sqrt(log(1. + r*r / CAUCHY_SIGMA_SQR))
+    return np.sqrt(np.log(1. + r * r / CAUCHY_SIGMA_SQR))
+
 
 def cauchy_sqrtcost_from_residual_multidimensional(r):
-    return sqrt(log(1. + dot(r,r) / CAUCHY_SIGMA_SQR))
+    return np.sqrt(np.log(1. + np.dot(r, r) / CAUCHY_SIGMA_SQR))
+
 
 ################################################################################
 # Given a residual vector and its gradient, compute the derivative of
 # the square root of the Cauchy-robustified error response.
 def Jcauchy_sqrtcost_from_residual(r, dr):
-    assert isscalar(r)
-    assert ndim(dr) == 1
+    assert np.isscalar(r)
+    assert np.ndim(dr) == 1
     sqrtcost = cauchy_sqrtcost_from_residual(r)
     if sqrtcost < 1e-8:
-        return 0.     # THIS WILL COME UP OFTEN: in particular
-                      # whenever the current F agrees with a
-                      # correspondence pair
-this is in fact the correct thing to do here
-    return dr * r / (sqrtcost * (CAUCHY_SIGMA_SQR + r*r))
+        return 0.  # THIS WILL COME UP OFTEN: in particular
+        # whenever the current F agrees with a
+        # correspondence pair
+    # this is in fact the correct thing to do here
+    return dr * r / (sqrtcost * (CAUCHY_SIGMA_SQR + r * r))
+
 
 def Jcauchy_sqrtcost_from_residual_multidimensional(r, Jr):
-    assert ndim(r) == 1
-    assert ndim(Jr) == 2
+    assert np.ndim(r) == 1
+    assert np.ndim(Jr) == 2
     sqrtcost = cauchy_sqrtcost_from_residual_multidimensional(r)
     if sqrtcost < 1e-8:
-        return zeros(len(r))  # this is in fact the correct thing to do here
-    return dot(Jr.T, r) / (sqrtcost * (CAUCHY_SIGMA_SQR + dot(r,r)))
+        return np.zeros(len(r))  # this is in fact the correct thing to do here
+    return np.dot(Jr.T, r) / (sqrtcost * (CAUCHY_SIGMA_SQR + np.dot(r, r)))
+
 
 ################################################################################
 def F1x(K, R, t, x):
     F = make_fundamental(K, R, t)
-    return dot(F[0], x)
+    return np.dot(F[0], x)
+
 
 def JF1x_R(K, R, t, x):
-    Kinv = inv(K)
-    v = dots(R.T, skew(t), Kinv[:,0])
-    #return dots(skew(v), Kinv, x)
-    return dots(Kinv.T, skew(t), R, skew(-dot(Kinv, x)))[0]
+    Kinv = np.linalg.inv(K)
+    v = dots(R.T, skew(t), Kinv[:, 0])
+    # return dots(skew(v), Kinv, x)
+    return dots(Kinv.T, skew(t), R, skew(-np.dot(Kinv, x)))[0]
+
 
 def JF1x_t(K, R, t, x):
-    Kinv = inv(K)
-    v = Kinv[:,0]
+    Kinv = np.linalg.inv(K)
+    v = Kinv[:, 0]
     return -dots(skew(v), R, Kinv.T, x)
 
+
 def JF1x(K, R, t, x):
-    return concatenate((JF1x_R(K, R, t, x),
-                        JF1x_t(K, R, t, x)))
+    return np.concatenate((JF1x_R(K, R, t, x), JF1x_t(K, R, t, x)))
 
 
 ################################################################################
 def FT1x(K, R, t, x):
     F = make_fundamental(K, R, t)
-    return dot(F[:,0], x)
+    return np.dot(F[:, 0], x)
+
 
 def JFT1x_R(K, R, t, x):
-    Kinv = inv(K)
-    v = Kinv[:,0]
+    Kinv = np.linalg.inv(K)
+    v = Kinv[:, 0]
     return dots(skew(v), R.T, skew(-t), Kinv, x)
 
+
 def JFT1x_t(K, R, t, x):
-    Kinv = inv(K)
-    v = dot(R, Kinv[:,0])
+    Kinv = np.linalg.inv(K)
+    v = np.dot(R, Kinv[:, 0])
     return dots(skew(v), Kinv, x)
 
+
 def JFT1x(K, R, t, x):
-    return concatenate((JFT1x_R(K, R, t, x),
-                        JFT1x_t(K, R, t, x)))
+    return np.concatenate((JFT1x_R(K, R, t, x), JFT1x_t(K, R, t, x)))
 
 
 ################################################################################
 def F2x(K, R, t, x):
     F = make_fundamental(K, R, t)
-    return dot(F[1], x)
+    return np.dot(F[1], x)
+
 
 def JF2x_R(K, R, t, x):
-    Kinv = inv(K)
-    v = dots(R.T, skew(t), Kinv[:,1])
+    Kinv = np.linalg.inv(K)
+    v = dots(R.T, skew(t), Kinv[:, 1])
     return dots(skew(v), Kinv, x)
 
+
 def JF2x_t(K, R, t, x):
-    Kinv = inv(K)
-    v = Kinv[:,1]
+    Kinv = np.linalg.inv(K)
+    v = Kinv[:, 1]
     return -dots(skew(v), R, Kinv, x)
 
+
 def JF2x(K, R, t, x):
-    return concatenate((JF2x_R(K, R, t, x),
-                        JF2x_t(K, R, t, x)))
+    return np.concatenate((JF2x_R(K, R, t, x), JF2x_t(K, R, t, x)))
 
 
 ################################################################################
 def FT2x(K, R, t, x):
     F = make_fundamental(K, R, t)
-    return dot(F[:,1], x)
+    return np.dot(F[:, 1], x)
+
 
 def JFT2x_R(K, R, t, x):
-    Kinv = inv(K)
-    v = Kinv[:,1]
+    Kinv = np.linalg.inv(K)
+    v = Kinv[:, 1]
     return dots(skew(v), R.T, skew(-t), Kinv, x)
 
+
 def JFT2x_t(K, R, t, x):
-    Kinv = inv(K)
-    v = dot(R, Kinv[:,1])
+    Kinv = np.linalg.inv(K)
+    v = np.dot(R, Kinv[:, 1])
     return dots(skew(v), Kinv, x)
 
+
 def JFT2x(K, R, t, x):
-    return concatenate((JFT2x_R(K, R, t, x),
-                        JFT2x_t(K, R, t, x)))
+    return np.concatenate((JFT2x_R(K, R, t, x), JFT2x_t(K, R, t, x)))
 
 
 ################################################################################
 def xFx(K, R, t, x0, x1):
-    assert shape(K) == (3,3)
-    assert shape(R) == (3,3)
-    assert shape(t) == (3,)
-    assert shape(x0) == (3,)
-    assert shape(x1) == (3,)
+    assert np.shape(K) == (3, 3)
+    assert np.shape(R) == (3, 3)
+    assert np.shape(t) == (3,)
+    assert np.shape(x0) == (3,)
+    assert np.shape(x1) == (3,)
     return dots(x1, make_fundamental(K, R, t), x0)
 
+
 def JxFx_R(K, R, t, x0, x1):
-    Kinv = inv(K)
-    v = dot(Kinv, x0)
+    Kinv = np.linalg.inv(K)
+    v = np.dot(Kinv, x0)
     return dots(x1, Kinv.T, skew(t), R, skew(-v))
 
+
 def JxFx_t(K, R, t, x0, x1):
-    Kinv = inv(K)
+    Kinv = np.linalg.inv(K)
     v = dots(R, Kinv, x0)
     return dots(x1, Kinv.T, skew(-v))
 
+
 def JxFx(K, R, t, x0, x1):
-    return concatenate((JxFx_R(K, R, t, x0, x1),
-                        JxFx_t(K, R, t, x0, x1)))
+    return np.concatenate((JxFx_R(K, R, t, x0, x1), JxFx_t(K, R, t, x0, x1)))
 
 
 ################################################################################
 def residual(K, R, t, x0, x1):
-    f  = xFx (K, R, t, x0, x1)
-    g1 = F1x (K, R, t, x0)
-    g2 = F2x (K, R, t, x0)
+    f = xFx(K, R, t, x0, x1)
+    g1 = F1x(K, R, t, x0)
+    g2 = F2x(K, R, t, x0)
     g3 = FT1x(K, R, t, x1)
     g4 = FT2x(K, R, t, x1)
-    return f / sqrt(g1*g1 + g2*g2 + g3*g3 + g4*g4)
+    return f / np.sqrt(g1 * g1 + g2 * g2 + g3 * g3 + g4 * g4)
+
 
 def Jresidual(K, R, t, x0, x1):
-    m = zeros(3)
+    m = np.zeros(3)
 
     f = xFx(K, R, t, x0, x1)
     Jf = JxFx(K, R, t, x0, x1)
@@ -252,9 +273,9 @@ def Jresidual(K, R, t, x0, x1):
     g4 = FT2x(K, R, t, x1)
     Jg4 = JFT2x(K, R, t, x1)
 
-    d = g1*g1 + g2*g2 + g3*g3 + g4*g4
-    Jd = g1*Jg1 + g2*Jg2 + g3*Jg3 + g4*Jg4
-    J = Jf/sqrt(d) - f*Jd / (d * sqrt(d))
+    d = g1 * g1 + g2 * g2 + g3 * g3 + g4 * g4
+    Jd = g1 * Jg1 + g2 * Jg2 + g3 * Jg3 + g4 * Jg4
+    J = Jf / np.sqrt(d) - f * Jd / (d * np.sqrt(d))
     return J
 
 
@@ -262,42 +283,45 @@ def Jresidual(K, R, t, x0, x1):
 def residual_robust(K, R, t, x0, x1):
     return cauchy_sqrtcost_from_residual(residual(K, R, t, x0, x1))
 
+
 def Jresidual_robust(K, R, t, x0, x1):
-    return Jcauchy_sqrtcost_from_residual(residual(K, R, t, x0, x1),
-                                          Jresidual(K, R, t, x0, x1))
+    return Jcauchy_sqrtcost_from_residual(residual(K, R, t, x0, x1), Jresidual(K, R, t, x0, x1))
 
 
 ################################################################################
 def cost(K, R, t, xs0, xs1):
     c = 0.
-    for x0,x1 in zip(xs0,xs1):
-        c += square(residual(K, R, t, x0, x1))
+    for x0, x1 in zip(xs0, xs1):
+        c += np.square(residual(K, R, t, x0, x1))
     return c
+
 
 ################################################################################
 def cost_robust(K, R, t, xs0, xs1):
     c = 0.
-    for x0,x1 in zip(xs0,xs1):
-        c += square(residual_robust(K, R, t, x0, x1))
+    for x0, x1 in zip(xs0, xs1):
+        c += np.square(residual_robust(K, R, t, x0, x1))
     return c
+
 
 ################################################################################
 # This function exists for testing only
 def compute_normal_equations(K, R, t, xs0, xs1):
     # Compute J^T * J and J^T * r
-    JTJ = zeros((6,6))  # 6x6
-    JTr = zeros(6)      # 6x1
+    JTJ = np.zeros((6, 6))  # 6x6
+    JTr = np.zeros(6)  # 6x1
 
-    for x0,x1 in zip(xs0,xs1):
+    for x0, x1 in zip(xs0, xs1):
         # Jacobian for the i-th point:
-        ri =  residual_robust(K, R, t, x0, x1)
+        ri = residual_robust(K, R, t, x0, x1)
         Ji = Jresidual_robust(K, R, t, x0, x1)
         # Add to full jacobian
-        JTJ += outer(Ji, Ji)    # 6x1 * 1x6 -> 6x6
-        JTr +=   dot(Ji, ri)    # 6x1 * 1x1 -> 6x1
+        JTJ += np.outer(Ji, Ji)  # 6x1 * 1x6 -> 6x6
+        JTr += np.dot(Ji, ri)  # 6x1 * 1x1 -> 6x1
 
     # Returns: a 6x6 matrix and a 6x1 vector
     return JTJ, JTr
+
 
 ################################################################################
 # Given:
@@ -313,21 +337,21 @@ def optimize_fmatrix(xs0, xs1, R_init, t_init):
     damping = INIT_DAMPING
     R_cur = R_init.copy()
     t_cur = t_init.copy()
-    t_cur /= norm(t_cur)
+    t_cur /= np.linalg.norm(t_cur)
 
-    xs0 = unpr(xs0)   # convert a list of 2-vectors to a list of 3-vectors with the last element set to 1
+    xs0 = unpr(xs0)  # convert a list of 2-vectors to a list of 3-vectors with the last element set to 1
     xs1 = unpr(xs1)
     cost_cur = cost_robust(K, R_cur, t_cur, xs0, xs1)
 
     # Create a function that returns a new function that linearizes costfunc about (R,t)
     # This is used for debugging only
-    #flocal = lambda R,t: lambda v: costfunc(K, dot(R, SO3.exp(v[:3])), t+v[3:], xs0, xs1)
+    # flocal = lambda R,t: lambda v: costfunc(K, dot(R, SO3.exp(v[:3])), t+v[3:], xs0, xs1)
 
     while num_steps < MAX_STEPS and damping < 1e+8 and not converged:
         print 'Step %d:   cost=%-10f damping=%f' % (num_steps, cost_cur, damping)
 
         # Compute normal equations
-        JTJ,JTr = compute_normal_equations(K, R_cur, t_cur, xs0, xs1)
+        JTJ, JTr = compute_normal_equations(K, R_cur, t_cur, xs0, xs1)
 
         # Pick a step length
         while damping < 1e+8 and not converged:
@@ -340,19 +364,19 @@ def optimize_fmatrix(xs0, xs1, R_init, t_init):
             b = JTr.copy()
             A = JTJ.copy()
             for i in range(A.shape[0]):
-                A[i,i] *= (1. + damping)
+                A[i, i] *= (1. + damping)
 
             # Freeze one translation parameter
             if FREEZE_LARGEST:
                 param_to_freeze = 3 + np.argmax(t_cur)
-                mask = (arange(6) != param_to_freeze)
+                mask = (np.arange(6) != param_to_freeze)
                 A = A[mask].T[mask].T
                 b = b[mask]
-    
+
             # Solve normal equations: 6x6
             try:
-                update = -solve(A, b)
-            except LinAlgError:
+                update = -np.linalg.solve(A, b)
+            except np.linalg.LinAlgError:
                 # Badly conditioned: increase damping and try again
                 damping *= 10.
                 continue
@@ -362,11 +386,11 @@ def optimize_fmatrix(xs0, xs1, R_init, t_init):
                 update = unmask(update, mask)
 
             # Take gradient step
-            R_next = dot(R_cur, SO3.exp(update[:3]))
+            R_next = np.dot(R_cur, SO3.exp(update[:3]))
             t_next = t_cur + update[3:]
 
             # Normalize to unit length
-            t_next /= norm(t_next)
+            t_next /= np.linalg.norm(t_next)
 
             # Compute new cost
             cost_next = cost_robust(K, R_next, t_next, xs0, xs1)
@@ -394,30 +418,30 @@ def optimize_fmatrix(xs0, xs1, R_init, t_init):
         print 'CONVERGED AFTER %d STEPS' % num_steps
 
     if DEBUG:
-        JTJ,JTr = compute_normal_equations(K, R_cur, t_cur, xs0, xs1, residualfunc, Jresidualfunc)
-        print 'Gradient magnitude at convergence:',norm(2.*JTr)
+        # JTJ, JTr = compute_normal_equations(K, R_cur, t_cur, xs0, xs1, residualfunc, Jresidualfunc)
+        JTJ, JTr = compute_normal_equations(K, R_cur, t_cur, xs0, xs1)
+        print 'Gradient magnitude at convergence:', np.linalg.norm(2. * JTr)
 
     return R_cur, t_cur
 
 
-
 ################################################################################
 def setup_test_problem(n=NUM_CORRESPONDENCES):
-    R0 = eye(3)
-    t0 = zeros(3)
+    R0 = np.eye(3)
+    t0 = np.zeros(3)
 
     R1 = dots(rotation_xz(-.2), rotation_xy(.1), rotation_yz(1.5))
-    t1 = array([-1., .5, -2.])
-    t1 /= norm(t1)
-    
-    R,t = relative_pose(R0,t0, R1,t1)
+    t1 = np.array([-1., .5, -2.])
+    t1 /= np.linalg.norm(t1)
 
-    random.seed(123)
-    pts  = random.randn(n,3) + array([0., 0., -5.])
-    xs0  = array([ pr(dot(K, dot(R0, x) + t0)) for x in pts ])
-    xs1  = array([ pr(dot(K, dot(R1, x) + t1)) for x in pts ])
-    xs0 += random.randn(*xs0.shape) * SENSOR_NOISE
-    xs1 += random.randn(*xs1.shape) * SENSOR_NOISE
+    R, t = relative_pose(R0, t0, R1, t1)
+
+    np.random.seed(123)
+    pts = np.random.randn(n, 3) + np.array([0., 0., -5.])
+    xs0 = np.array([pr(np.dot(K, np.dot(R0, x) + t0)) for x in pts])
+    xs1 = np.array([pr(np.dot(K, np.dot(R1, x) + t1)) for x in pts])
+    xs0 += np.random.randn(*xs0.shape) * SENSOR_NOISE
+    xs1 += np.random.randn(*xs1.shape) * SENSOR_NOISE
 
     return R, t, xs0, xs1
 
@@ -425,14 +449,14 @@ def setup_test_problem(n=NUM_CORRESPONDENCES):
 ################################################################################
 def run_with_synthetic_data():
     R_true, t_true, xs0, xs1 = setup_test_problem()
-    #savetxt('standalone/essential_matrix_data/true_pose.txt',
+    # savetxt('standalone/essential_matrix_data/true_pose.txt',
     #        hstack((R_true, t_true[:,newaxis])), fmt='%10f')
 
     PERTURB = .1
 
-    random.seed(73)
-    R_init = dot(R_true, SO3.exp(random.randn(3)*PERTURB))
-    t_init = t_true + random.randn(3)*PERTURB
+    np.random.seed(73)
+    R_init = np.dot(R_true, SO3.exp(np.random.randn(3) * PERTURB))
+    t_init = t_true + np.random.randn(3) * PERTURB
 
     # savetxt('standalone/essential_matrix_data/init_pose.txt',
     #         hstack((R_init, t_init[:,newaxis])),
@@ -440,27 +464,28 @@ def run_with_synthetic_data():
     # savetxt('standalone/essential_matrix_data/100_correspondences_tenpercent_noise.txt',
     #         hstack((xs0, xs1)),
     #         fmt='%10f')
-    
+
     R_opt, t_opt = optimize_fmatrix(xs0, xs1, R_init, t_init)
 
     print '\nTrue [R t]:'
-    print hstack((R_true, t_true[:,newaxis]))
+    print np.hstack((R_true, t_true[:, np.newaxis]))
     print '\nInitial [R t]:'
-    print hstack((R_init, t_init[:,newaxis]))
+    print np.hstack((R_init, t_init[:, np.newaxis]))
     print '\nFinal [R t]:'
-    print hstack((R_opt, t_opt[:,newaxis]))
+    print np.hstack((R_opt, t_opt[:, np.newaxis]))
 
     print '\nError in R:'
-    print dot(R_opt.T, R_true) - eye(3)
+    print np.dot(R_opt.T, R_true) - np.eye(3)
     print '\nError in t:'
-    print abs(t_opt - t_true)
+    print np.abs(t_opt - t_true)
 
     print '\nAlgebraic error at true:'
-    print '  ',algebraic_error_forwards(K, R_true, t_true, xs0, xs1)
+    print '  ', algebraic_error_forwards(K, R_true, t_true, xs0, xs1)
     print '\nAlgebraic error at initial:'
-    print '  ',algebraic_error_forwards(K, R_init, t_init, xs0, xs1)
+    print '  ', algebraic_error_forwards(K, R_init, t_init, xs0, xs1)
     print '\nAlgebraic error at final:'
-    print '  ',algebraic_error_forwards(K, R_opt, t_opt, xs0, xs1)
+    print '  ', algebraic_error_forwards(K, R_opt, t_opt, xs0, xs1)
+
 
 ################################################################################
 def run_with_data_from_file():
@@ -468,25 +493,25 @@ def run_with_data_from_file():
         print 'Usage: python %s CORRESPONDENCES.txt INITIAL_POSE.txt' % sys.argv[0]
         sys.exit(-1)
 
-    corrs = loadtxt(sys.argv[1])
-    xs0 = corrs[:,:2]
-    xs1 = corrs[:,2:]
+    corrs = np.loadtxt(sys.argv[1])
+    xs0 = corrs[:, :2]
+    xs1 = corrs[:, 2:]
 
-    P_init = loadtxt(sys.argv[2]).reshape((3,4))
-    R_init = P_init[:,:3]
-    t_init = P_init[:,3]
+    P_init = np.loadtxt(sys.argv[2]).reshape((3, 4))
+    R_init = P_init[:, :3]
+    t_init = P_init[:, 3]
 
     R_opt, t_opt = optimize_fmatrix(xs0, xs1, R_init, t_init)
 
-    t_init /= norm(t_init)
+    t_init /= np.linalg.norm(t_init)
 
     print '\nInitial [R t]:'
-    print hstack((R_init, t_init[:,newaxis]))
+    print np.hstack((R_init, t_init[:, np.newaxis]))
     print '\nFinal [R t]:'
-    print hstack((R_opt, t_opt[:,newaxis]))
+    print np.hstack((R_opt, t_opt[:, np.newaxis]))
 
 
 ################################################################################
 if __name__ == '__main__':
-    #run_with_synthetic_data()
+    # run_with_synthetic_data()
     run_with_data_from_file()

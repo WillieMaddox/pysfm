@@ -1,11 +1,11 @@
-from numpy import *
-from numpy.linalg import *
+import numpy as np
+
 
 def compute(X, ndims):
-    X = asarray(X)
-    u,s,v = svd(X, full_matrices=False)
+    X = np.asarray(X)
+    u, s, v = np.linalg.svd(X, full_matrices=False)
     return v[:ndims]
 
-def project(X, subspace):
-    return dot(X, subspace.T)
 
+def project(X, subspace):
+    return np.dot(X, subspace.T)

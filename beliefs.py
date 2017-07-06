@@ -1,50 +1,51 @@
 import numpy as np
-from numpy import *
-from numpy.linalg import *
 import scipy.integrate
 import itertools
 
 from numpy_test import NumpyTestCase
 import finite_differences
-from algebra import *
-from geometry import *
+from algebra import dots
 
-LOG_MIN_REPRESENTABLE_FLOAT = -300 * log(10)   # TODO: do this exactly
+LOG_MIN_REPRESENTABLE_FLOAT = -300 * np.log(10)  # TODO: do this exactly
 
 
 def is_positive_definite(A):
-    evals = eigvals(A)
+    evals = np.linalg.eigvals(A)
     return np.all(evals > 0)
+
 
 ################################################################################
 def integrate2d(f, lower, upper):
-    assert shape(lower) == (2,)
-    assert shape(upper) == (2,)
-    y,err = scipy.integrate.dblquad(lambda y,x: f(array([x,y])),
-                                    lower[0],
-                                    upper[0],
-                                    lambda x: lower[1],
-                                    lambda x: upper[1])
+    assert np.shape(lower) == (2,)
+    assert np.shape(upper) == (2,)
+    y, err = scipy.integrate.dblquad(lambda y, x: f(np.array([x, y])),
+                                     lower[0],
+                                     upper[0],
+                                     lambda x: lower[1],
+                                     lambda x: upper[1])
     return y
+
 
 ################################################################################
 # Compute the logarithm of the determinant of a symmetric positive
 # definite matrix in a numerically stable way
 def log_det_covariance(cov):
-    return 2. * np.sum(log(diag(cholesky(cov))))
+    return 2. * np.sum(np.log(np.diag(np.linalg.cholesky(cov))))
+
 
 ################################################################################
 # Compute the logarithm of the determinant of the inverse of a
 # information matrix. (Actually is applicable to any symmetric positive definite matrix)
 def log_det_inv_infomat(L):
-    return 2. * np.sum(log(diag(inv(cholesky(L)))))
+    return 2. * np.sum(np.log(np.diag(np.linalg.inv(np.linalg.cholesky(L)))))
+
 
 ################################################################################
 # Evaluate the normal distribution at x
 def evaluate_normal(x, mean, cov):
-    x = asarray(x)
-    mean = asarray(mean)
-    cov = asarray(cov)
+    x = np.asarray(x)
+    mean = np.asarray(mean)
+    cov = np.asarray(cov)
 
     assert x.ndim == 1
     assert mean.ndim == 1
@@ -52,23 +53,24 @@ def evaluate_normal(x, mean, cov):
     assert x.shape == mean.shape
     assert cov.shape == (x.size, x.size)
 
-    k = size(x)
-    expterm = -.5 * dots(x-mean, inv(cov), x-mean)
+    k = np.size(x)
+    expterm = -.5 * dots(x - mean, np.linalg.inv(cov), x - mean)
     if expterm < LOG_MIN_REPRESENTABLE_FLOAT:
         return 0.  # Cannot do better than this unfortunately
 
-    #denom = (2. * pi) ** (k/2.) * sqrt(det(cov))
-    #return exp(expterm) / denom
+    # denom = (2. * pi) ** (k/2.) * sqrt(det(cov))
+    # return np.exp(expterm) / denom
 
-    log_denom = .5*k*log(2. * pi) + .5*log_det_covariance(cov)
-    return exp(expterm - log_denom)
+    log_denom = .5 * k * np.log(2. * np.pi) + .5 * log_det_covariance(cov)
+    return np.exp(expterm - log_denom)
+
 
 ################################################################################
 # Evaluate the inverse normal distribution at x
 def evaluate_invnormal(x, v, L):
-    x = asarray(x)
-    v = asarray(v)
-    L = asarray(L)
+    x = np.asarray(x)
+    v = np.asarray(v)
+    L = np.asarray(L)
 
     assert x.ndim == 1
     assert v.ndim == 1
@@ -76,37 +78,38 @@ def evaluate_invnormal(x, v, L):
     assert x.shape == v.shape
     assert L.shape == (x.size, x.size)
 
-    k = size(x)
-    expterm_var = -.5 * dots(x, L, x) + dot(x, v) # This term depends on x
-    expterm_const = -.5 * dots(v, inv(L), v)      # This term does not depend on x
+    k = np.size(x)
+    expterm_var = -.5 * dots(x, L, x) + np.dot(x, v)  # This term depends on x
+    expterm_const = -.5 * dots(v, np.linalg.inv(L), v)  # This term does not depend on x
     expterm = expterm_var + expterm_const
     if expterm < LOG_MIN_REPRESENTABLE_FLOAT:
         return 0.  # Cannot do better than this unfortunately
 
-    #denom = (2. * pi) ** (k/2.) * sqrt(det(inv(L)))
-    #return exp(expterm) / denom
+    # denom = (2. * pi) ** (k/2.) * sqrt(det(inv(L)))
+    # return np.exp(expterm) / denom
 
-    log_denom = .5*k*log(2. * pi) + .5*log_det_inv_infomat(L)
-    return exp(expterm - log_denom)
-    
+    log_denom = .5 * k * np.log(2. * np.pi) + .5 * log_det_inv_infomat(L)
+    return np.exp(expterm - log_denom)
 
 
 ################################################################################
 # Sample from the normal distrubtion
 def sample_normal(mean, cov):
-    return random.multivariate_normal(mean, cov)
+    return np.random.multivariate_normal(mean, cov)
+
 
 ################################################################################
 # Sample from the inverse normal distrubtion
 def sample_invnormal(info_vec, info_mat):
-    cov = inv(info_mat)
-    return random.multivariate_normal(dot(cov, info_vec), cov)
+    cov = np.linalg.inv(info_mat)
+    return np.random.multivariate_normal(np.dot(cov, info_vec), cov)
+
 
 ################################################################################
 # Marginalize parameters out of the normal distribution
 def marginalize_normal(mean, cov, params_to_keep):
-    mean = asarray(mean)
-    cov = asarray(cov)
+    mean = np.asarray(mean)
+    cov = np.asarray(cov)
     assert mean.ndim == 1
     assert cov.ndim == 2
     assert cov.shape == (mean.size, mean.size)
@@ -115,36 +118,37 @@ def marginalize_normal(mean, cov, params_to_keep):
     params_to_keep = list(params_to_keep)
 
     # marginalize
-    marg_mean = mean[ params_to_keep ]
+    marg_mean = mean[params_to_keep]
 
-    marg_cov = cov[ params_to_keep ].T[ params_to_keep ].T
+    marg_cov = cov[params_to_keep].T[params_to_keep].T
     return marg_mean, marg_cov
+
 
 ################################################################################
 # Marginalize parameters out of the inverse normal distribution
 def marginalize_invnormal(v, L, params_to_keep):
-    v = asarray(v)
-    L = asarray(L)
+    v = np.asarray(v)
+    L = np.asarray(L)
     assert v.ndim == 1
     assert L.ndim == 2
     assert L.shape == (v.size, v.size)
-    
+
     # make a mask
     paramset = set(params_to_keep)
-    keep_mask = array([ i in paramset for i in range(len(v)) ])
-    
+    keep_mask = np.array([i in paramset for i in range(len(v))])
+
     # pull out the pieces
-    Laa = L[  keep_mask  ].T[  keep_mask  ].T
-    Lab = L[  keep_mask  ].T[ ~keep_mask  ].T
-    Lba = L[ ~keep_mask  ].T[  keep_mask  ].T
-    Lbb = L[ ~keep_mask  ].T[ ~keep_mask  ].T
-    va  = v[  keep_mask  ]
-    vb  = v[ ~keep_mask  ]
+    Laa = L[keep_mask].T[keep_mask].T
+    Lab = L[keep_mask].T[~keep_mask].T
+    Lba = L[~keep_mask].T[keep_mask].T
+    Lbb = L[~keep_mask].T[~keep_mask].T
+    va = v[keep_mask]
+    vb = v[~keep_mask]
 
     # this is simply the schur compliment
-    Lbb_inv = inv(Lbb)
+    Lbb_inv = np.linalg.inv(Lbb)
     marg_L = Laa - dots(Lab, Lbb_inv, Lba)
-    marg_v = va  - dots(Lab, Lbb_inv, vb)
+    marg_v = va - dots(Lab, Lbb_inv, vb)
 
     return marg_v, marg_L
 
@@ -152,32 +156,37 @@ def marginalize_invnormal(v, L, params_to_keep):
 ################################################################################
 # Convert from normal to inverse normal parametrisation
 def normal_to_invnormal(mean, cov):
-    return dot(inv(cov), mean), inv(cov)
+    return np.dot(np.linalg.inv(cov), mean), np.linalg.inv(cov)
+
 
 ################################################################################
 # Convert from inverse normal to normal parametrisation
 def invnormal_to_normal(v, L):
-    return dot(inv(L), v), inv(L)
+    return np.dot(np.linalg.inv(L), v), np.linalg.inv(L)
+
 
 ################################################################################
 # Compute product of normal distributions in ordinary parametrisation
 def product_of_normals(mean1, cov1, mean2, cov2):
-    cov = inv(inv(cov1) + inv(cov2))
-    mean = dot(cov, (solve(cov1, mean1) + solve(cov2, mean2)))
+    cov = np.linalg.inv(np.linalg.inv(cov1) + np.linalg.inv(cov2))
+    mean = np.dot(cov, (np.linalg.solve(cov1, mean1) + np.linalg.solve(cov2, mean2)))
     return mean, cov
+
 
 ################################################################################
 # Compute product of normal distributions in inverse parametrisation
 def product_of_invnormals(v1, L1, v2, L2):
-    return v1+v2, L1+L2
+    return v1 + v2, L1 + L2
+
 
 ################################################################################
 # Create a random (but valid) mean and covariance matrix for a k-dimensional Gaussian
 def make_gaussian(k):
-    mean = random.randn(k)
-    A = random.rand(k, k)
-    cov = dot(A.T, A)
+    mean = np.random.randn(k)
+    A = np.random.rand(k, k)
+    cov = np.dot(A.T, A)
     return mean, cov
+
 
 ################################################################################
 # Compute the parameters for a Gaussian expressing the likelihood 
@@ -205,9 +214,10 @@ def compute_likelihood(x0,
                        measurement,
                        sensor_info):
     residual = measurement - prediction
-    v = dots(Jprediction.T, sensor_info, residual + dot(Jprediction, x0))
+    v = dots(Jprediction.T, sensor_info, residual + np.dot(Jprediction, x0))
     L = dots(Jprediction.T, sensor_info, Jprediction)
     return v, L
+
 
 ################################################################################
 # Update a belief state given a new observation. The prior belief state is
@@ -265,11 +275,6 @@ def compute_posterior(prior_v,
     posterior_v = prior_v + likelihood_v
     posterior_L = prior_L + likelihood_L
     return posterior_v, posterior_L
-    
-
-
-
-
 
 
 ################################################################################
@@ -280,124 +285,123 @@ class BeliefTest(NumpyTestCase):
         # avoid the potential confusion of having size(measurement) ==
         # size(state) we choose a 2d state and 3d measurement
 
-        self.predict = lambda x: array([ x[0]**2, 
-                                         x[0]**2 + x[1]**2,
-                                         3.*x[1]
-                                         ])
-        self.Jpredict = lambda x: array([[ 2.*x[0],  0.      ],
-                                         [ 2.*x[0],  2.*x[1] ],
-                                         [ 0.     ,  3.      ]])
+        self.predict = lambda x: np.array([x[0] ** 2,
+                                        x[0] ** 2 + x[1] ** 2,
+                                        3. * x[1]
+                                        ])
+        self.Jpredict = lambda x: np.array([[2. * x[0], 0.],
+                                         [2. * x[0], 2. * x[1]],
+                                         [0., 3.]])
 
     def test_jacobians(self):
-        x0 = array([ 2., 0. ])
+        x0 = np.array([2., 0.])
         self.assertJacobian(self.predict, self.Jpredict, x0)
 
     def test_logdet(self):
         mean, cov = make_gaussian(10)
-        self.assertAlmostEqual(log(det(cov)),
+        self.assertAlmostEqual(np.log(np.linalg.det(cov)),
                                log_det_covariance(cov))
 
-        v,L = normal_to_invnormal(mean, cov)
-        self.assertAlmostEqual(log(det(inv(L))),
+        v, L = normal_to_invnormal(mean, cov)
+        self.assertAlmostEqual(np.log(np.linalg.det(np.linalg.inv(L))),
                                log_det_inv_infomat(L))
 
     def test_normal_distributions(self):
-        x = array([1., 3.5])
+        x = np.array([1., 3.5])
 
-        mean = array([2., 3.])
-        cov = array([[4., 2.],
+        mean = np.array([2., 3.])
+        cov = np.array([[4., 2.],
                      [2., 3.]])
 
-        v = dot(inv(cov),mean)
-        L = inv(cov)
+        v = np.dot(np.linalg.inv(cov), mean)
+        L = np.linalg.inv(cov)
 
         self.assertAlmostEqual(evaluate_normal(x, mean, cov),
                                evaluate_invnormal(x, v, L))
 
         f1 = lambda x: evaluate_normal(x, mean, cov)
-        self.assertAlmostEqual(integrate2d(f1, mean-[10,10], mean+[10,10]), 1., places=5)
+        self.assertAlmostEqual(integrate2d(f1, mean - [10, 10], mean + [10, 10]), 1., places=5)
 
         f2 = lambda x: evaluate_invnormal(x, v, L)
-        self.assertAlmostEqual(integrate2d(f2, mean-[10,10], mean+[10,10]), 1., places=5)
+        self.assertAlmostEqual(integrate2d(f2, mean - [10, 10], mean + [10, 10]), 1., places=5)
 
         self.assertFunctionsEqual(f1, f2, near=x, radius=5, nsamples=100)
 
     def test_product(self):
-        mean1,cov1 = make_gaussian(5)
-        mean2,cov2 = make_gaussian(5)
-        
-        mean,cov = product_of_normals(mean1, cov1, mean2, cov2)
+        mean1, cov1 = make_gaussian(5)
+        mean2, cov2 = make_gaussian(5)
 
-        v1,L1 = normal_to_invnormal(mean1, cov1)
-        v2,L2 = normal_to_invnormal(mean2, cov2)
+        mean, cov = product_of_normals(mean1, cov1, mean2, cov2)
 
-        v,L = product_of_invnormals(v1, L1, v2, L2)
-        mean_,cov_ = invnormal_to_normal(v,L)
+        v1, L1 = normal_to_invnormal(mean1, cov1)
+        v2, L2 = normal_to_invnormal(mean2, cov2)
+
+        v, L = product_of_invnormals(v1, L1, v2, L2)
+        mean_, cov_ = invnormal_to_normal(v, L)
 
         self.assertArrayEqual(mean, mean_)
         self.assertArrayEqual(cov, cov_)
-        
 
     def test_marginalize(self):
         # Setup a Gaussian
-        random.seed(245970)
-        mean,cov = make_gaussian(5)  # sample a random mean and covariance matrix
+        np.random.seed(245970)
+        mean, cov = make_gaussian(5)  # sample a random mean and covariance matrix
 
         # Pick parameters to keep
-        params_to_keep = (0,2,4)
+        params_to_keep = (0, 2, 4)
 
         # Marginalize in ordinary parametrisation
         marg_mean, marg_cov = marginalize_normal(mean, cov, params_to_keep)
         self.assertShape(marg_mean, (3,))
-        self.assertShape(marg_cov, (3,3))
+        self.assertShape(marg_cov, (3, 3))
 
         # Marginalize in inverse parametrisation
-        v,L = normal_to_invnormal(mean, cov)
+        v, L = normal_to_invnormal(mean, cov)
         marg_v, marg_L = marginalize_invnormal(v, L, params_to_keep)
         marg_mean2, marg_cov2 = invnormal_to_normal(marg_v, marg_L)
         self.assertShape(marg_mean2, (3,))
-        self.assertShape(marg_cov2, (3,3))
-        
+        self.assertShape(marg_cov2, (3, 3))
+
         # Check that they wind up the same
         self.assertArrayEqual(marg_mean, marg_mean2)
         self.assertArrayEqual(marg_cov, marg_cov2)
 
     def test_posterior(self):
-        A = np.arange(6).reshape((2,3))
-        b = array([-2., -1.])
+        A = np.arange(6).reshape((2, 3))
+        b = np.array([-2., -1.])
 
-        prior_cov  =  diag([5., 2., 1.5])
-        prior_mean = array([2., 3., 2.1])
-        prior_v,prior_L = normal_to_invnormal(prior_mean, prior_cov)
+        prior_cov = np.diag([5., 2., 1.5])
+        prior_mean = np.array([2., 3., 2.1])
+        prior_v, prior_L = normal_to_invnormal(prior_mean, prior_cov)
 
-        predict = lambda x: dots(A,x)+b
+        predict = lambda x: dots(A, x) + b
 
-        x0 = array([-5., 0., 3.])
+        x0 = np.array([-5., 0., 3.])
 
-        z = predict(x0) + array([.1, -.21])
-        z_cov = diag([2., 4.]) + 1.
-        z_info = inv(z_cov)
+        z = predict(x0) + np.array([.1, -.21])
+        z_cov = np.diag([2., 4.]) + 1.
+        z_info = np.linalg.inv(z_cov)
 
         posterior_v, posterior_L = compute_posterior(prior_v, prior_L, x0, predict(x0), A, z, z_info)
-        
+
         P_prior = lambda x: evaluate_invnormal(x, prior_v, prior_L)
-        P_lik   = lambda x: evaluate_normal(z, predict(x), z_cov)
-        P_post  = lambda x: evaluate_invnormal(x, posterior_v, posterior_L)
+        P_lik = lambda x: evaluate_normal(z, predict(x), z_cov)
+        P_post = lambda x: evaluate_invnormal(x, posterior_v, posterior_L)
         P_joint = lambda x: P_prior(x) * P_lik(x)
 
         nx = 10
-        xs0 = linspace(x0[0]-2., x0[0]+2., nx)
-        xs = vstack((xs0, ones(nx)*x0[1], ones(nx)*x0[2])).T
+        xs0 = np.linspace(x0[0] - 2., x0[0] + 2., nx)
+        xs = np.vstack((xs0, np.ones(nx) * x0[1], np.ones(nx) * x0[2])).T
 
-        posts  = array([ P_post(x) for x in xs ])
-        joints = array([ P_joint(x) for x in xs ])
+        posts = np.array([P_post(x) for x in xs])
+        joints = np.array([P_joint(x) for x in xs])
 
         # The posterior should be proportional (not equal) to the joint
         self.assertArrayProportional(posts, joints)
 
+
 if __name__ == '__main__':
     import unittest
-    #seterr(all='raise')
-    unittest.main()
 
-        
+    # seterr(all='raise')
+    unittest.main()

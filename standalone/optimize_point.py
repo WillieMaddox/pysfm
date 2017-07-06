@@ -1,8 +1,3 @@
-# Import python's numerics library
-from numpy import *
-from numpy.linalg import *
-from numpy.random import *
-
 from helpers import *
 
 # Notes on python numerics:
@@ -13,23 +8,25 @@ from helpers import *
 
 # Optimization parameters
 MAX_STEPS = 100
-CONVERGENCE_THRESH = 1e-5   # convergence detected when improvement less than this
+CONVERGENCE_THRESH = 1e-5  # convergence detected when improvement less than this
 INIT_DAMPING = 10.
-         
+
 # Camera calibration
-K = array([[ 1.,   0.,   0. ],
-           [ 0.,   1.,   0. ],
-           [ 0.,   0.,   1. ]])
+K = np.array([[1., 0., 0.],
+              [0., 1., 0.],
+              [0., 0., 1.]])
+
 
 # Compute the sum of Cauchy-robustified reprojection errors
 def cost_robust(measurements, Rs, ts, x):
     error = 0.
     for i in range(len(measurements)):
-        projection = dot(K, dot(Rs[i], x) + ts[i])
+        projection = np.dot(K, np.dot(Rs[i], x) + ts[i])
         projection = projection[:2] / projection[2]
         reproj_error = projection - measurements[i]
         error += cauchy_cost_from_reprojection_error(reproj_error)  # sum of squared differences
     return error
+
 
 # Compute the reprojection error of x given a camera (R,t) with
 # intrinsics K. Also compute the Jacobian with respect to x.
@@ -46,25 +43,26 @@ def cost_robust(measurements, Rs, ts, x):
 #   Jf_t = Jpr(K * (R * x + t)) * K * R
 # where Jpr is the Jacobian of g(x,y,z) = cauchy(x/z, y/z)
 def compute_point_jacobian_robust(R, t, x, measurement):
-    R = asarray(R)
-    t = asarray(t)
-    x = asarray(x)
-    measurement = asarray(measurement)
+    R = np.asarray(R)
+    t = np.asarray(t)
+    x = np.asarray(x)
+    measurement = np.asarray(measurement)
 
     # projection: p = K * (R*x + t)
-    p = dot(K, dot(R, x) + t)
+    p = np.dot(K, np.dot(R, x) + t)
     # jacobian of projection with respect to p
-    Jpr = array([[ 1./p[2],  0.,       -p[0] / (p[2]*p[2]) ],
-                 [ 0.,       1./p[2],  -p[1] / (p[2]*p[2]) ]])
+    Jpr = np.array([[1. / p[2], 0., -p[0] / (p[2] * p[2])],
+                    [0., 1. / p[2], -p[1] / (p[2] * p[2])]])
 
     # Divide by z
     prediction = p[:2] / p[2]
     # Robustify
     residual, Jresidual = cauchy_residual_from_reprojection_error(prediction - measurement)
     # Jacobian of the projection with respect to 3D point
-    J = dots4(Jresidual, Jpr, K, R)
+    J = dots(Jresidual, Jpr, K, R)
 
     return J, residual
+
 
 #
 # Optimization
@@ -88,14 +86,14 @@ def optimize_point(measurements, Rs, ts, x_init):
         print 'Step %d: cost=%f' % (num_steps, cost_cur)
 
         # Compute J^T * J and J^T * r
-        JTJ = zeros((3,3))  # 3x3
-        JTr = zeros(3)      # 3x1
+        JTJ = np.zeros((3, 3))  # 3x3
+        JTr = np.zeros(3)  # 3x1
         for i in range(len(Rs)):
             # Jacobian for the i-th point:
             Ji, ri = compute_point_jacobian_robust(Rs[i], ts[i], x_cur, measurements[i])
             # Add to full jacobian
-            JTJ += dot(Ji.T, Ji)    # 3x2 * 2x3 -> 3x3
-            JTr += dot(Ji.T, ri)    # 3x2 * 2x1 -> 3x1
+            JTJ += np.dot(Ji.T, Ji)  # 3x2 * 2x3 -> 3x3
+            JTr += np.dot(Ji.T, ri)  # 3x2 * 2x1 -> 3x1
 
         # Pick a step length
         while not converged:
@@ -107,12 +105,12 @@ def optimize_point(measurements, Rs, ts, x_init):
             # Apply Levenberg-Marquardt damping
             A = JTJ.copy()
             for i in range(3):
-                A[i,i] *= (1. + damping)
-    
+                A[i, i] *= (1. + damping)
+
             # Solve normal equations: 3x3
             try:
-                update = -solve(A, JTr)
-            except LinAlgError:
+                update = -np.linalg.solve(A, JTr)
+            except np.linalg.LinAlgError:
                 # Badly conditioned: increase damping and try again
                 damping *= 10.
                 continue
@@ -126,7 +124,7 @@ def optimize_point(measurements, Rs, ts, x_init):
                 # Cost decreased: accept the update
                 if cost_cur - cost_next < CONVERGENCE_THRESH:
                     converged = True
-    
+
                 if damping > 1e-15:
                     damping *= .1
 
@@ -140,6 +138,7 @@ def optimize_point(measurements, Rs, ts, x_init):
                 damping *= 10.
 
     return x_cur
+
 
 ####################################################################################
 # End of main optimization stuff
@@ -163,19 +162,20 @@ def optimize_point_using_lsq_initialization(measurements, Rs, ts):
     x_init = triangulate_algebraic_lsq(K, Rs, ts, measurements)
     return optimize_point(measurements, Rs, ts, x_init), x_init
 
+
 # This function is identical to optimize_point except that it
 # initializes optimization with a point estimated using RANSAC over
 # the triangulation error.
 def optimize_point_using_ransac_initialization(measurements, Rs, ts):
-    measurements = asarray(measurements)
-    Rs = asarray(Rs)
-    ts = asarray(ts)
+    measurements = np.asarray(measurements)
+    Rs = np.asarray(Rs)
+    ts = np.asarray(ts)
 
     # RANSAC iterations
-    best_cost = inf
+    best_cost = np.inf
     for i in range(100):
         # Sample 2 measurements
-        sample = permutation(len(measurements))[:2]
+        sample = np.random.permutation(len(measurements))[:2]
         # Compute minimal solution
         x_hyp = triangulate_algebraic_lsq(K,
                                           Rs[sample],
@@ -189,6 +189,7 @@ def optimize_point_using_ransac_initialization(measurements, Rs, ts):
 
     return optimize_point(measurements, Rs, ts, x_init), x_init
 
+
 #
 # Run tests
 #
@@ -198,35 +199,35 @@ def run_with_synthetic_data():
     MEASUREMENT_NOISE = .01
     NUM_OUTLIERS = 10
 
-    seed(4875)  # repeatability
+    np.random.seed(4875)  # repeatability
 
     # Pick a true point location
-    x_true = array([4., .5, -20.])  # far from origin so that it is never close to a focal plane
+    x_true = np.array([4., .5, -20.])  # far from origin so that it is never close to a focal plane
 
     # Generate some poses
-    Rs = array([ SO3_exp(randn(3) * .5) for i in range(NUM_CAMERAS) ])
-    ts = array([ randn(3) * 4 for i in range(NUM_CAMERAS) ])
-    
+    Rs = np.array([SO3_exp(np.random.randn(3) * .5) for i in range(NUM_CAMERAS)])
+    ts = np.array([np.random.randn(3) * 4 for i in range(NUM_CAMERAS)])
+
     # Generate some measurements
-    measurements = array([ dot(K, dot(R,x_true)+t) for R,t in zip(Rs,ts) ])
-    measurements = measurements[:,:2] / measurements[:,2:]   # pinhole projection
+    measurements = np.array([np.dot(K, np.dot(R, x_true) + t) for R, t in zip(Rs, ts)])
+    measurements = measurements[:, :2] / measurements[:, 2:]  # pinhole projection
 
     # Add some measurement noise
-    measurements += randn(*measurements.shape) * MEASUREMENT_NOISE
+    measurements += np.random.randn(*measurements.shape) * MEASUREMENT_NOISE
 
     # Add some outliers
-    outliers = permutation(len(measurements))[:NUM_OUTLIERS]
-    measurements[outliers] = randn(len(outliers), 2) * 3.
+    outliers = np.random.permutation(len(measurements))[:NUM_OUTLIERS]
+    measurements[outliers] = np.random.randn(len(outliers), 2) * 3.
 
     # Save to file
-    pose_data = hstack(( vstack(Rs), ts.flatten()[:,newaxis] ))
-    savetxt(open('point_estimation_data/100poses.txt', 'w'), pose_data, fmt='%10f')    
-    savetxt(open('point_estimation_data/100measurements_with_outliers.txt', 'w'), measurements, fmt='%10f')
+    pose_data = np.hstack((np.vstack(Rs), ts.flatten()[:, np.newaxis]))
+    np.savetxt(open('point_estimation_data/100poses.txt', 'w'), pose_data, fmt='%10f')
+    np.savetxt(open('point_estimation_data/100measurements_with_outliers.txt', 'w'), measurements, fmt='%10f')
 
     # Optimize
-    #x_opt,x_init = optimize_point_using_lsq_initialization(measurements, Rs, ts)
-    x_opt,x_init = optimize_point_using_ransac_initialization(measurements, Rs, ts)
-    
+    # x_opt,x_init = optimize_point_using_lsq_initialization(measurements, Rs, ts)
+    x_opt, x_init = optimize_point_using_ransac_initialization(measurements, Rs, ts)
+
     # Report
     print '\nTrue point:'
     print x_true
@@ -243,10 +244,10 @@ def run_with_data_from_file():
         sys.exit(-1)
 
     try:
-        posedata = loadtxt(open(sys.argv[1]))
+        posedata = np.loadtxt(open(sys.argv[1]))
         assert posedata.shape[1] == 4  # check that there are 4 cols
-        Rs = posedata[:,:3].reshape((-1, 3, 3))
-        ts = posedata[:,3].reshape((-1, 3))
+        Rs = posedata[:, :3].reshape((-1, 3, 3))
+        ts = posedata[:, 3].reshape((-1, 3))
         assert len(Rs) == len(ts)
     except Exception as ex:
         print 'Failed to load poses from %s\nFormat is 3 rows per camera, each with 4 entries' % sys.argv[1]
@@ -254,7 +255,7 @@ def run_with_data_from_file():
         sys.exit(-1)
 
     try:
-        measurements = loadtxt(open(sys.argv[2]))
+        measurements = np.loadtxt(open(sys.argv[2]))
         assert measurements.shape[1] == 2
         assert len(measurements) == len(Rs)
     except:
@@ -270,7 +271,6 @@ def run_with_data_from_file():
     print x_opt
 
 
-
 if __name__ == '__main__':
-    #run_with_synthetic_data()
+    # run_with_synthetic_data()
     run_with_data_from_file()

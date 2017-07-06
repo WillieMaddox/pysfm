@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from numpy import *
+# from numpy import *
 
 from bundle import *
 import sensor_model

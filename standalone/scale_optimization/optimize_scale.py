@@ -1,8 +1,3 @@
-# Import python's numerics library
-from numpy import *
-from numpy.linalg import *
-from numpy.random import *
-
 from helpers import *
 
 # Notes on python numerics:
@@ -13,13 +8,14 @@ from helpers import *
 
 # Optimization parameters
 MAX_STEPS = 100
-CONVERGENCE_THRESH = 1e-5   # convergence detected when improvement less than this
+CONVERGENCE_THRESH = 1e-5  # convergence detected when improvement less than this
 INIT_DAMPING = 10.
-         
+
 # Camera calibration
-K = array([[ 1.,   0.,   0. ],
-           [ 0.,   1.,   0. ],
-           [ 0.,   0.,   1. ]])
+K = np.array([[1., 0., 0.],
+              [0., 1., 0.],
+              [0., 0., 1.]])
+
 
 # Compute the reprojection error of x given a camera (R,t) with
 # intrinsics K. Also compute the Jacobian with respect to R and t.
@@ -37,20 +33,20 @@ K = array([[ 1.,   0.,   0. ],
 #   Jf_R = Jpr(K * (R * x + t)) * K
 # where Jpr is the Jacobian of (x,y,z) -> (x/z, y/z)
 def compute_scale_jacobian_robust(R, t, x, measurement):
-    R = asarray(R)
-    t = asarray(t)
-    x = asarray(x)
-    measurement = asarray(measurement)
+    R = np.asarray(R)
+    t = np.asarray(t)
+    x = np.asarray(x)
+    measurement = np.asarray(measurement)
 
     # projection: p = K * (R*x + t)
-    p = dot(K, dot(R, x) + t)
+    p = np.dot(K, np.dot(R, x) + t)
 
     # jacobian of projection with respect to p
-    Jpr = array([[ 1./p[2],  0.,       -p[0] / (p[2]*p[2]) ],
-                 [ 0.,       1./p[2],  -p[1] / (p[2]*p[2]) ]])
+    Jpr = np.array([[1. / p[2], 0., -p[0] / (p[2] * p[2])],
+                    [0., 1. / p[2], -p[1] / (p[2] * p[2])]])
 
     # jacobian of projection with respect to scale
-    Js = dot(Jpr, t)
+    Js = np.dot(Jpr, t)
 
     # divide by z
     prediction = p[:2] / p[2]
@@ -62,11 +58,12 @@ def compute_scale_jacobian_robust(R, t, x, measurement):
 
     return Jpr, residual
 
+
 # Compute the sum of Cauchy-robustified reprojection errors
 def cost_robust(points, measurements, R, t):
     error = 0.
     for i in range(len(points)):
-        projection = dot(K, dot(R, points[i]) + t)
+        projection = np.dot(K, np.dot(R, points[i]) + t)
         projection = projection[:2] / projection[2]
         reproj_error = projection - measurements[i]
         error += cauchy_cost_from_reprojection_error(reproj_error)  # sum of squared differences
@@ -101,8 +98,8 @@ def optimize_pose(points, measurements, R_fixed, t_init):
         for i in range(len(points)):
             # Jacobian for the i-th point:
             Ji, ri = compute_scale_jacobian_robust(R_fixed, t_cur, points[i], measurements[i])
-            gradient += dot(Ji, Ji)
-            residual += dot(Ji, ri)
+            gradient += np.dot(Ji, Ji)
+            residual += np.dot(Ji, ri)
 
         # If |gradient| < eps then we're done
         if abs(gradient) < 1e-8:
@@ -134,6 +131,7 @@ def optimize_pose(points, measurements, R_fixed, t_init):
 
     return t_cur
 
+
 ####################################################################################
 # End of main optimization stuff
 ####################################################################################
@@ -154,38 +152,38 @@ def run_with_synthetic_data():
     MEASUREMENT_NOISE = .1
     NUM_OUTLIERS = 0
 
-    seed(1211)  # repeatability
+    np.random.seed(1211)  # repeatability
 
-    R_true = eye(3)
-    t_true = array([5., 1.,  5.])
+    R_true = np.eye(3)
+    t_true = np.array([5., 1., 5.])
 
     # Generate some points
-    xs = randn(NUM_POINTS, 3)
-    
+    xs = np.random.randn(NUM_POINTS, 3)
+
     # Generate some measurements
-    measurements = array([ dot(K, dot(R_true,x)+t_true) for x in xs ])
-    measurements = measurements[:,:2] / measurements[:,2:]   # pinhole projection
+    measurements = np.array([np.dot(K, np.dot(R_true, x) + t_true) for x in xs])
+    measurements = measurements[:, :2] / measurements[:, 2:]  # pinhole projection
 
     # Add some measurement noise
-    measurements += randn(*measurements.shape) * MEASUREMENT_NOISE
+    measurements += np.random.randn(*measurements.shape) * MEASUREMENT_NOISE
 
     # Add some outliers
-    outliers = permutation(len(measurements))[:NUM_OUTLIERS]
-    measurements[outliers] = randn(len(outliers), 2) * 3.
+    outliers = np.random.permutation(len(measurements))[:NUM_OUTLIERS]
+    measurements[outliers] = np.random.randn(len(outliers), 2) * 3.
 
     # Pick a starting point for optimization
     t_init = t_true * 2.5
 
     # Save to file
-    pt_data = hstack((xs,measurements))
-    savetxt(open('scale_estimation_data/100_measurements_tenpercent_noise.txt', 'w'), pt_data, fmt='%10f')
-    
-    P = hstack((R_true, t_init[:,newaxis]))
-    savetxt(open('scale_estimation_data/init_pose.txt', 'w'), P, fmt='%10f')
+    pt_data = np.hstack((xs, measurements))
+    np.savetxt(open('scale_estimation_data/100_measurements_tenpercent_noise.txt', 'w'), pt_data, fmt='%10f')
+
+    P = np.hstack((R_true, t_init[:, np.newaxis]))
+    np.savetxt(open('scale_estimation_data/init_pose.txt', 'w'), P, fmt='%10f')
 
     # Optimize
     t_opt = optimize_pose(xs, measurements, R_true, t_init)
-    
+
     # Report
     print '\nTrue translation:'
     print t_true
@@ -202,18 +200,18 @@ def run_with_data_from_file():
         sys.exit(-1)
 
     try:
-        data1 = loadtxt(open(sys.argv[1]))
-        xs = data1[:,:3]
-        measurements = data1[:,3:]
+        data1 = np.loadtxt(open(sys.argv[1]))
+        xs = data1[:, :3]
+        measurements = data1[:, 3:]
     except:
         print 'Failed to load measurements from %s\nFormat is "x y z image_x image_y" for each row' % sys.argv[1]
         sys.exit(-1)
 
     try:
-        data2 = loadtxt(open(sys.argv[2]))
-        assert data2.shape == (3,4), 'Data in %s should be a 3x4 matrix' % sys.argv[2]
-        R_init = data2[:,:3]
-        t_init = data2[:,3]
+        data2 = np.loadtxt(open(sys.argv[2]))
+        assert data2.shape == (3, 4), 'Data in %s should be a 3x4 matrix' % sys.argv[2]
+        R_init = data2[:, :3]
+        t_init = data2[:, 3]
     except:
         print 'Failed to load initial pose from %s\nFormat is a single 3x4 projection matrix' % sys.argv[2]
         sys.exit(-1)
@@ -228,5 +226,5 @@ def run_with_data_from_file():
 
 
 if __name__ == '__main__':
-    #run_with_synthetic_data()
+    # run_with_synthetic_data()
     run_with_data_from_file()
